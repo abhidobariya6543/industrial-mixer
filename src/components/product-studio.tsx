@@ -11,9 +11,58 @@ import {
 } from "@/data/product";
 
 const initialOrbit = cameraAngles[0].orbit;
+const pageScale = "1 1 1";
+
+const arSizes = [
+  { id: "small", label: "Small", scale: "0.35 0.35 0.35" },
+  { id: "medium", label: "Medium", scale: "0.55 0.55 0.55" },
+  { id: "large", label: "Large", scale: "0.85 0.85 0.85" },
+] as const;
+
+type ArSizeId = (typeof arSizes)[number]["id"];
+
+function ArSizePicker({
+  value,
+  onChange,
+}: {
+  value: ArSizeId;
+  onChange: (id: ArSizeId) => void;
+}) {
+  return (
+    <div className="mt-4" aria-label="AR size">
+      <p className="text-sm text-[#6f6a62]">Size</p>
+      <div className="mt-2 flex justify-center gap-1">
+        {arSizes.map((size) => {
+          const selected = size.id === value;
+          return (
+            <button
+              key={size.id}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => onChange(size.id)}
+              className={`rounded-full px-3 py-1.5 text-sm ${
+                selected
+                  ? "bg-[#1a1916] text-white"
+                  : "bg-[#f4f1eb] text-[#1a1916]"
+              }`}
+            >
+              {size.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function isLocalHost(hostname: string) {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function isHandheld() {
+  const agent = navigator.userAgent;
+  if (/Android|iPhone|iPad|iPod/i.test(agent)) return true;
+  return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
 }
 
 async function qrDataUrl(url: string) {
@@ -113,11 +162,16 @@ export function ProductStudio() {
   const [colors, setColors] = useState<PartColors>(untouchedColors);
   const [angleId, setAngleId] = useState<string | null>(null);
   const [spinning, setSpinning] = useState(true);
+  const [arSize, setArSize] = useState<ArSizeId>("medium");
+  const [arGuide, setArGuide] = useState(false);
+  const [openingAr, setOpeningAr] = useState(false);
   const [arHelp, setArHelp] = useState(false);
   const [pageUrl, setPageUrl] = useState("");
   const [localPage, setLocalPage] = useState(true);
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const [qrFailed, setQrFailed] = useState(false);
+  const [arError, setArError] = useState<string | null>(null);
+  const [arUnsupported, setArUnsupported] = useState(false);
   const originalsRef = useRef<Map<string, SavedMaterial> | null>(null);
   const spinningRef = useRef(spinning);
   spinningRef.current = spinning;
@@ -125,9 +179,13 @@ export function ProductStudio() {
 
   useEffect(() => {
     let active = true;
-    void import("@google/model-viewer").then(() => {
-      if (active) setViewerReady(true);
-    });
+    void import("@google/model-viewer")
+      .then(() => {
+        if (active) setViewerReady(true);
+      })
+      .catch(() => {
+        if (active) setFailed(true);
+      });
     return () => {
       active = false;
     };
@@ -180,13 +238,33 @@ export function ProductStudio() {
   }, [spinning, loaded]);
 
   useEffect(() => {
-    if (!arHelp) return;
+    if (!arHelp && !arGuide) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setArHelp(false);
+      if (event.key === "Escape") {
+        setArHelp(false);
+        setArGuide(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [arHelp]);
+  }, [arHelp, arGuide]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !loaded) return;
+    const onStatus = (event: Event) => {
+      const status = (event as CustomEvent<{ status: string }>).detail?.status;
+      if (status === "not-presenting") viewer.scale = pageScale;
+      if (status === "failed") {
+        viewer.scale = pageScale;
+        setOpeningAr(false);
+        setArError("AR could not start. Try again on this device.");
+        setArGuide(true);
+      }
+    };
+    viewer.addEventListener("ar-status", onStatus);
+    return () => viewer.removeEventListener("ar-status", onStatus);
+  }, [loaded, viewerReady]);
 
   function chooseColor(finish: Finish) {
     setColors((current) => ({ ...current, [partId]: finish }));
@@ -203,23 +281,72 @@ export function ProductStudio() {
     setAngleId(angle.id);
   }
 
-  function viewInAr() {
-    const viewer = viewerRef.current;
-    if (viewer?.canActivateAR) {
-      void viewer.activateAR().catch(() => setArHelp(true));
-      return;
-    }
+  function showPhoneNotice() {
     const url = window.location.href;
     const local = isLocalHost(window.location.hostname);
     setPageUrl(url);
     setLocalPage(local);
     setQrUrl(null);
     setQrFailed(false);
+    setArGuide(false);
     setArHelp(true);
     if (local) return;
     void qrDataUrl(url)
       .then((code) => setQrUrl(code))
       .catch(() => setQrFailed(true));
+  }
+
+  async function openCamera() {
+    const viewer = viewerRef.current;
+    if (!viewer || openingAr) return;
+    if (!isHandheld()) {
+      showPhoneNotice();
+      return;
+    }
+    if (!viewer.canActivateAR) {
+      setArError(
+        "This device cannot open AR. On iPhone, iPad, or iPod, use Safari. On an Android phone or tablet, use Chrome.",
+      );
+      return;
+    }
+    const choice = arSizes.find((size) => size.id === arSize) ?? arSizes[1];
+    setArError(null);
+    setOpeningAr(true);
+    viewer.arScale = "fixed";
+    viewer.scale = choice.scale;
+    try {
+      await viewer.updateComplete;
+      await viewer.activateAR();
+      if (viewer.getAttribute("ar-status") === "failed") {
+        throw new Error("AR failed");
+      }
+      setArGuide(false);
+    } catch {
+      viewer.scale = pageScale;
+      setArError("AR could not start. Try again on this device.");
+    } finally {
+      if (viewer.getAttribute("ar-status") !== "session-started") {
+        viewer.scale = pageScale;
+      }
+      setOpeningAr(false);
+    }
+  }
+
+  function viewInAr() {
+    const viewer = viewerRef.current;
+    setArError(null);
+    if (!isHandheld()) {
+      showPhoneNotice();
+      return;
+    }
+    const ready = Boolean(viewer?.canActivateAR);
+    setArUnsupported(!ready);
+    if (!ready) {
+      setArError(
+        "This device cannot open AR. On iPhone, iPad, or iPod, use Safari. On an Android phone or tablet, use Chrome.",
+      );
+    }
+    setArGuide(true);
   }
 
   function resetAll() {
@@ -228,7 +355,9 @@ export function ProductStudio() {
     setPartId("body");
     setAngleId(null);
     setSpinning(true);
+    setArSize("medium");
     if (!viewer) return;
+    viewer.scale = pageScale;
     viewer.autoRotate = true;
     viewer.cameraTarget = "auto auto auto";
     viewer.fieldOfView = "auto";
@@ -257,7 +386,7 @@ export function ProductStudio() {
           ar
           ar-modes="webxr scene-viewer quick-look"
           ar-placement="floor"
-          ar-scale="auto"
+          ar-scale="fixed"
         />
       ) : null}
 
@@ -347,6 +476,57 @@ export function ProductStudio() {
         </div>
       </div>
 
+      {arGuide ? (
+        <div
+          className="absolute inset-0 z-20 flex items-end justify-center bg-[#1a1916]/30 p-4 sm:items-center"
+          onClick={() => {
+            if (!openingAr) setArGuide(false);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ar-guide-title"
+            className="w-full max-w-sm rounded-3xl bg-white px-5 py-5 text-center shadow-lg"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="ar-guide-title" className="text-base font-medium">
+              {arUnsupported ? "AR is not available" : "Place the mixer"}
+            </h2>
+            {arUnsupported ? (
+              <p className="mt-3 text-sm leading-6 text-[#9a3412]" role="alert">
+                {arError}
+              </p>
+            ) : (
+              <>
+                <ArSizePicker value={arSize} onChange={setArSize} />
+                <ul className="mt-3 space-y-1 text-sm leading-6 text-[#5c574f]">
+                  <li>Drag to move it.</li>
+                  <li>Walk closer to see it.</li>
+                  <li>Tap the screen to set it down.</li>
+                </ul>
+                {arError ? (
+                  <p className="mt-3 text-sm leading-6 text-[#9a3412]" role="alert">
+                    {arError}
+                  </p>
+                ) : null}
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (arUnsupported) setArGuide(false);
+                else void openCamera();
+              }}
+              disabled={openingAr}
+              className="mt-4 rounded-full bg-[#1a1916] px-4 py-1.5 text-sm text-white disabled:opacity-40"
+            >
+              {arUnsupported ? "Close" : openingAr ? "Opening camera" : "Open camera"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {arHelp ? (
         <div
           className="absolute inset-0 z-20 flex items-end justify-center bg-[#1a1916]/30 p-4 sm:items-center"
@@ -360,18 +540,18 @@ export function ProductStudio() {
             onClick={(event) => event.stopPropagation()}
           >
             <h2 id="ar-title" className="text-base font-medium">
-              View in your room
+              Use a mobile device
             </h2>
             {localPage ? (
               <p className="mt-2 text-sm leading-6 text-[#5c574f]">
-                AR opens on a phone. Open this page there, then tap View in AR
-                to place the mixer on the floor.
+                View in AR does not run on a computer or laptop. Open this page
+                on a phone, iPad, iPod, or tablet, then tap View in AR.
               </p>
             ) : (
               <>
                 <p className="mt-2 text-sm leading-6 text-[#5c574f]">
-                  Scan this code with your phone, then tap View in AR to place
-                  the mixer on the floor.
+                  View in AR does not run on a computer or laptop. Scan this
+                  code with a phone, iPad, iPod, or tablet, then tap View in AR.
                 </p>
                 <div className="mx-auto mt-4 flex h-52 w-52 items-center justify-center rounded-2xl bg-[#f4f1eb]">
                   {qrUrl ? (
@@ -385,7 +565,9 @@ export function ProductStudio() {
                     />
                   ) : (
                     <p className="px-4 text-sm text-[#6f6a62]">
-                      {qrFailed ? "Use the link below on your phone." : "Preparing code"}
+                      {qrFailed
+                        ? "The code could not be created. Open the address below on a phone, iPad, iPod, or tablet."
+                        : "Preparing code"}
                     </p>
                   )}
                 </div>
