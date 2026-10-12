@@ -173,6 +173,7 @@ export function ProductStudio() {
   const [qrFailed, setQrFailed] = useState(false);
   const [arError, setArError] = useState<string | null>(null);
   const [arUnsupported, setArUnsupported] = useState(false);
+  const [colorsOpen, setColorsOpen] = useState(false);
   const originalsRef = useRef<Map<string, SavedMaterial> | null>(null);
   const spinningRef = useRef(spinning);
   spinningRef.current = spinning;
@@ -597,7 +598,51 @@ export function ProductStudio() {
       </p>
 
       <div className="absolute inset-x-4 bottom-8 flex justify-center sm:bottom-10">
-        <div className="w-full max-w-md rounded-3xl bg-white/90 px-4 py-3 shadow-sm backdrop-blur">
+        <button
+          type="button"
+          aria-expanded={colorsOpen}
+          onClick={() => setColorsOpen(true)}
+          className={`items-center gap-1.5 rounded-full bg-white/90 px-4 py-2 text-sm text-[#1a1916] shadow-sm backdrop-blur ${
+            colorsOpen ? "hidden" : "inline-flex sm:hidden"
+          }`}
+        >
+          Colors
+          <svg viewBox="0 0 20 20" className="h-4 w-4" aria-hidden="true">
+            <path
+              d="M5 12.5 10 7.5 15 12.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+        <div
+          className={`w-full max-w-md rounded-3xl bg-white/90 px-4 py-3 shadow-sm backdrop-blur ${
+            colorsOpen ? "block" : "hidden sm:block"
+          }`}
+        >
+          <div className="mb-2 flex justify-center sm:hidden">
+            <button
+              type="button"
+              aria-expanded={colorsOpen}
+              onClick={() => setColorsOpen(false)}
+              className="flex items-center gap-1.5 rounded-full px-3 py-1 text-sm text-[#5c574f]"
+            >
+              Colors
+              <svg viewBox="0 0 20 20" className="h-4 w-4" aria-hidden="true">
+                <path
+                  d="M5 7.5 10 12.5 15 7.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+          </div>
           <div className="mb-3 flex justify-center gap-1">
             {paintParts.map((part) => {
               const selected = part.id === partId;
