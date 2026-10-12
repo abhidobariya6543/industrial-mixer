@@ -8,7 +8,7 @@ const geistSans = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "Industrial Mixer 3D Viewer",
+  title: "Industrial Mixer — Abhi Dobariya",
   description:
     "Rotate an industrial mixer with inclined conveyor, preview body colors, and review product details.",
 };

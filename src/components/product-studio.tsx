@@ -14,6 +14,7 @@ const initialOrbit = cameraAngles[0].orbit;
 const pageScale = "1 1 1";
 
 const arSizes = [
+  { id: "auto", label: "Auto", scale: null },
   { id: "small", label: "Small", scale: "0.35 0.35 0.35" },
   { id: "medium", label: "Medium", scale: "0.55 0.55 0.55" },
   { id: "large", label: "Large", scale: "0.85 0.85 0.85" },
@@ -31,7 +32,7 @@ function ArSizePicker({
   return (
     <div className="mt-4" aria-label="AR size">
       <p className="text-sm text-[#6f6a62]">Size</p>
-      <div className="mt-2 flex justify-center gap-1">
+      <div className="mt-2 flex flex-wrap justify-center gap-1">
         {arSizes.map((size) => {
           const selected = size.id === value;
           return (
@@ -162,7 +163,7 @@ export function ProductStudio() {
   const [colors, setColors] = useState<PartColors>(untouchedColors);
   const [angleId, setAngleId] = useState<string | null>(null);
   const [spinning, setSpinning] = useState(true);
-  const [arSize, setArSize] = useState<ArSizeId>("medium");
+  const [arSize, setArSize] = useState<ArSizeId>("auto");
   const [arGuide, setArGuide] = useState(false);
   const [openingAr, setOpeningAr] = useState(false);
   const [arHelp, setArHelp] = useState(false);
@@ -309,11 +310,16 @@ export function ProductStudio() {
       );
       return;
     }
-    const choice = arSizes.find((size) => size.id === arSize) ?? arSizes[1];
+    const choice = arSizes.find((size) => size.id === arSize) ?? arSizes[0];
     setArError(null);
     setOpeningAr(true);
-    viewer.arScale = "fixed";
-    viewer.scale = choice.scale;
+    if (choice.scale) {
+      viewer.arScale = "fixed";
+      viewer.scale = choice.scale;
+    } else {
+      viewer.arScale = "auto";
+      viewer.scale = pageScale;
+    }
     try {
       await viewer.updateComplete;
       await viewer.activateAR();
@@ -355,7 +361,7 @@ export function ProductStudio() {
     setPartId("body");
     setAngleId(null);
     setSpinning(true);
-    setArSize("medium");
+    setArSize("auto");
     if (!viewer) return;
     viewer.scale = pageScale;
     viewer.autoRotate = true;
@@ -386,7 +392,6 @@ export function ProductStudio() {
           ar
           ar-modes="webxr scene-viewer quick-look"
           ar-placement="floor"
-          ar-scale="fixed"
         />
       ) : null}
 
@@ -587,7 +592,11 @@ export function ProductStudio() {
         </div>
       ) : null}
 
-      <div className="absolute inset-x-4 bottom-4 flex justify-center sm:bottom-5">
+      <p className="pointer-events-none absolute bottom-3 left-4 z-10 text-xs text-[#6f6a62]">
+        Abhi Dobariya
+      </p>
+
+      <div className="absolute inset-x-4 bottom-8 flex justify-center sm:bottom-10">
         <div className="w-full max-w-md rounded-3xl bg-white/90 px-4 py-3 shadow-sm backdrop-blur">
           <div className="mb-3 flex justify-center gap-1">
             {paintParts.map((part) => {
