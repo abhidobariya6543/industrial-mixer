@@ -1,0 +1,369 @@
+"use client";
+
+import type { ModelViewerElement } from "@google/model-viewer";
+import { useEffect, useRef, useState } from "react";
+import {
+  cameraAngles,
+  paintParts,
+  finishes,
+  type Finish,
+  type PaintPart,
+} from "@/data/product";
+
+const initialOrbit = cameraAngles[0].orbit;
+
+type PartColors = Record<PaintPart["id"], Finish | null>;
+
+type SavedMaterial = {
+  color: [number, number, number, number];
+  metallic: number;
+};
+
+const paintedMetals = new Set([
+  "carbon steel",
+  "chromium plate",
+  "satin finish stainless steel",
+  "matte steel",
+  "polished steel",
+]);
+
+function untouchedColors(): PartColors {
+  return { body: null, motors: null, frame: null };
+}
+
+function captureOriginals(viewer: ModelViewerElement) {
+  const saved = new Map<string, SavedMaterial>();
+  for (const material of viewer.model?.materials ?? []) {
+    const name = material.name ?? "";
+    if (saved.has(name)) continue;
+    const factor = material.pbrMetallicRoughness.baseColorFactor;
+    saved.set(name, {
+      color: [factor[0], factor[1], factor[2], factor[3] ?? 1],
+      metallic: material.pbrMetallicRoughness.metallicFactor,
+    });
+  }
+  return saved;
+}
+
+function restorePart(
+  viewer: ModelViewerElement,
+  part: PaintPart,
+  originals: Map<string, SavedMaterial>,
+) {
+  const names = new Set(part.materials);
+  for (const material of viewer.model?.materials ?? []) {
+    const name = material.name ?? "";
+    if (!names.has(name)) continue;
+    const saved = originals.get(name);
+    if (!saved) continue;
+    material.pbrMetallicRoughness.setBaseColorFactor(saved.color);
+    material.pbrMetallicRoughness.setMetallicFactor(saved.metallic);
+  }
+}
+
+function paintPart(viewer: ModelViewerElement, part: PaintPart, hex: string) {
+  const names = new Set(part.materials);
+  for (const material of viewer.model?.materials ?? []) {
+    if (!names.has(material.name ?? "")) continue;
+    material.pbrMetallicRoughness.setBaseColorFactor(hex);
+    if (paintedMetals.has(material.name ?? "")) {
+      material.pbrMetallicRoughness.setMetallicFactor(0.25);
+    }
+  }
+}
+
+function applyColors(
+  viewer: ModelViewerElement,
+  colors: PartColors,
+  originals: Map<string, SavedMaterial> | null,
+) {
+  if (!originals) return;
+  for (const part of paintParts) {
+    const finish = colors[part.id];
+    if (finish) paintPart(viewer, part, finish.hex);
+    else restorePart(viewer, part, originals);
+  }
+}
+
+export function ProductStudio() {
+  const viewerRef = useRef<ModelViewerElement | null>(null);
+  const [viewerReady, setViewerReady] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [failed, setFailed] = useState(false);
+  const [partId, setPartId] = useState<PaintPart["id"]>("body");
+  const [colors, setColors] = useState<PartColors>(untouchedColors);
+  const [angleId, setAngleId] = useState<string | null>(null);
+  const [spinning, setSpinning] = useState(true);
+  const originalsRef = useRef<Map<string, SavedMaterial> | null>(null);
+  const spinningRef = useRef(spinning);
+  spinningRef.current = spinning;
+  const activePart = paintParts.find((part) => part.id === partId) ?? paintParts[0];
+
+  useEffect(() => {
+    let active = true;
+    void import("@google/model-viewer").then(() => {
+      if (active) setViewerReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !viewerReady) return;
+
+    const onProgress = (event: Event) => {
+      const detail = (event as CustomEvent<{ totalProgress: number }>).detail;
+      setProgress(Math.round((detail?.totalProgress ?? 0) * 100));
+    };
+    const onLoad = () => {
+      if (!originalsRef.current) originalsRef.current = captureOriginals(viewer);
+      setLoaded(true);
+      setFailed(false);
+      if (!viewer.dataset.orbitReady) {
+        viewer.cameraOrbit = initialOrbit;
+        viewer.dataset.orbitReady = "true";
+      }
+      viewer.autoRotateDelay = 700;
+      viewer.setAttribute("rotation-per-second", "16deg");
+      viewer.autoRotate = spinningRef.current;
+    };
+    const onError = () => setFailed(true);
+
+    viewer.addEventListener("progress", onProgress);
+    viewer.addEventListener("load", onLoad);
+    viewer.addEventListener("error", onError);
+    if (viewer.loaded) onLoad();
+
+    return () => {
+      viewer.removeEventListener("progress", onProgress);
+      viewer.removeEventListener("load", onLoad);
+      viewer.removeEventListener("error", onError);
+    };
+  }, [viewerReady]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !loaded) return;
+    applyColors(viewer, colors, originalsRef.current);
+  }, [colors, loaded]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !loaded) return;
+    viewer.autoRotate = spinning;
+  }, [spinning, loaded]);
+
+  function chooseColor(finish: Finish) {
+    setColors((current) => ({ ...current, [partId]: finish }));
+  }
+
+  function showAngle(angle: (typeof cameraAngles)[number]) {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    viewer.cameraTarget = "auto auto auto";
+    viewer.fieldOfView = "auto";
+    viewer.cameraOrbit = angle.orbit;
+    viewer.jumpCameraToGoal();
+    viewer.autoRotate = spinning;
+    setAngleId(angle.id);
+  }
+
+  function resetAll() {
+    const viewer = viewerRef.current;
+    setColors(untouchedColors());
+    setPartId("body");
+    setAngleId(null);
+    setSpinning(true);
+    if (!viewer) return;
+    viewer.autoRotate = true;
+    viewer.cameraTarget = "auto auto auto";
+    viewer.fieldOfView = "auto";
+    viewer.cameraOrbit = initialOrbit;
+    viewer.jumpCameraToGoal();
+  }
+
+  return (
+    <div className="relative h-dvh w-screen overflow-hidden bg-[#eceae4] text-[#1a1916]">
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,#fbfbfa_0%,#e8e4dc_58%,#d9d4ca_100%)]" />
+      {viewerReady ? (
+        <model-viewer
+          ref={viewerRef}
+          className="absolute inset-0 h-full w-full"
+          src="/models/mixer.glb"
+          alt="Industrial mixer with inclined conveyor"
+          camera-controls
+          touch-action="pan-y"
+          shadow-intensity="1.15"
+          environment-image="neutral"
+          exposure="1.05"
+          interaction-prompt="none"
+          loading="eager"
+          min-field-of-view="16deg"
+          max-field-of-view="42deg"
+          ar
+          ar-modes="webxr scene-viewer quick-look"
+        />
+      ) : null}
+
+      {!loaded && !failed ? (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="w-56 text-center">
+            <p className="text-xs tracking-[0.18em] text-[#6f6a62] uppercase">
+              Loading model
+            </p>
+            <div className="mt-3 h-1 overflow-hidden rounded-full bg-[#d5d0c7]">
+              <div
+                className="h-full bg-[#1a1916] transition-[width] duration-200"
+                style={{ width: `${Math.max(progress, 8)}%` }}
+              />
+            </div>
+            <p className="mt-2 text-sm text-[#6f6a62]">{progress}%</p>
+          </div>
+        </div>
+      ) : null}
+
+      {failed ? (
+        <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
+          <p className="max-w-sm text-sm text-[#6f6a62]">
+            The 3D model could not be loaded. Refresh the page and try again.
+          </p>
+        </div>
+      ) : null}
+
+      <div className="absolute inset-x-0 top-4 flex justify-center px-4">
+        <div className="flex flex-wrap items-center justify-center gap-2">
+        <div className="flex gap-1 rounded-full bg-white/90 p-1 shadow-sm backdrop-blur">
+          {cameraAngles.map((angle) => {
+            const selected = angle.id === angleId;
+            return (
+              <button
+                key={angle.id}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => showAngle(angle)}
+                className={`rounded-full px-3 py-1.5 text-sm ${
+                  selected
+                    ? "bg-[#1a1916] text-white"
+                    : "text-[#1a1916] hover:bg-black/5"
+                }`}
+              >
+                {angle.label}
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={spinning}
+          aria-label="Auto rotate"
+          onClick={() => setSpinning((on) => !on)}
+          className="flex items-center gap-2 rounded-full bg-white/90 py-1.5 pr-1.5 pl-3 text-sm text-[#1a1916] shadow-sm backdrop-blur hover:bg-white"
+        >
+          Rotate
+          <span
+            className={`relative h-5 w-9 rounded-full transition ${
+              spinning ? "bg-[#1a1916]" : "bg-[#d6d1c8]"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition ${
+                spinning ? "translate-x-4" : ""
+              }`}
+            />
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={resetAll}
+          className="rounded-full bg-white/90 px-3 py-1.5 text-sm text-[#1a1916] shadow-sm backdrop-blur hover:bg-white"
+        >
+          Reset
+        </button>
+        </div>
+      </div>
+
+      <div className="absolute inset-x-4 bottom-4 flex justify-center sm:bottom-5">
+        <div className="w-full max-w-md rounded-3xl bg-white/90 px-4 py-3 shadow-sm backdrop-blur">
+          <div className="mb-3 flex justify-center gap-1">
+            {paintParts.map((part) => {
+              const selected = part.id === partId;
+              return (
+                <button
+                  key={part.id}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => setPartId(part.id)}
+                  className={`rounded-full px-3 py-1 text-sm ${
+                    selected
+                      ? "bg-[#1a1916] text-white"
+                      : "text-[#5c574f] hover:bg-black/5"
+                  }`}
+                >
+                  {part.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mb-2 text-center text-sm font-medium">
+            {colors[partId]?.name ?? "Original"}
+          </p>
+          <div className="flex flex-wrap justify-center gap-2.5">
+            <button
+              type="button"
+              aria-label={`${activePart.label} original color`}
+              aria-pressed={colors[partId] === null}
+              onClick={() =>
+                setColors((current) => ({ ...current, [partId]: null }))
+              }
+              className={`flex h-9 w-9 items-center justify-center rounded-full border bg-white text-[#1a1916] shadow-sm ${
+                colors[partId] === null
+                  ? "border-[#1a1916] ring-2 ring-[#1a1916] ring-offset-2 ring-offset-white"
+                  : "border-black/10 hover:scale-105"
+              }`}
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="7.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.6"
+                />
+                <path
+                  d="M7.4 16.6 16.6 7.4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.6"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+            {finishes.map((option) => {
+              const selected = option.id === colors[partId]?.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  aria-label={`${activePart.label} ${option.name}`}
+                  aria-pressed={selected}
+                  onClick={() => chooseColor(option)}
+                  className={`h-9 w-9 rounded-full border shadow-sm transition ${
+                    selected
+                      ? "border-[#1a1916] ring-2 ring-[#1a1916] ring-offset-2 ring-offset-white"
+                      : "border-black/10 hover:scale-105"
+                  }`}
+                  style={{ backgroundColor: option.hex }}
+                />
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
