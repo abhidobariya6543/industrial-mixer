@@ -605,7 +605,7 @@ export function ProductStudio() {
       ) : null}
 
       <p className="pointer-events-none absolute bottom-3 left-4 z-10 text-xs text-[#6f6a62]">
-        Abhi Dobariya
+        Demo created by Four Arms Studio
       </p>
 
       <div className="absolute inset-x-4 bottom-8 flex justify-center sm:bottom-10">
