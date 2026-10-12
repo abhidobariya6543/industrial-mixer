@@ -180,6 +180,17 @@ export function ProductStudio() {
   const activePart = paintParts.find((part) => part.id === partId) ?? paintParts[0];
 
   useEffect(() => {
+    const blockBrowserGesture = (event: TouchEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest("button, a, input, textarea, select, [role='switch']")) return;
+      event.preventDefault();
+    };
+    document.addEventListener("touchmove", blockBrowserGesture, { passive: false });
+    return () => document.removeEventListener("touchmove", blockBrowserGesture);
+  }, []);
+
+  useEffect(() => {
     let active = true;
     void import("@google/model-viewer")
       .then(() => {
@@ -378,11 +389,11 @@ export function ProductStudio() {
       {viewerReady ? (
         <model-viewer
           ref={viewerRef}
-          className="absolute inset-0 h-full w-full"
+          className="absolute inset-0 h-full w-full touch-none select-none outline-none"
           src="/models/mixer.glb"
           alt="Industrial mixer with inclined conveyor"
           camera-controls
-          touch-action="pan-y"
+          touch-action="none"
           shadow-intensity="1.15"
           environment-image="neutral"
           exposure="1.05"
