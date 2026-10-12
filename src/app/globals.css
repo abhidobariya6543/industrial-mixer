@@ -24,5 +24,6 @@ body {
 
 model-viewer {
   --poster-color: transparent;
+  --ar-button-display: none;
   background: transparent;
 }

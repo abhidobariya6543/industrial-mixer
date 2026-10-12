@@ -12,6 +12,24 @@ import {
 
 const initialOrbit = cameraAngles[0].orbit;
 
+function isLocalHost(hostname: string) {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+async function qrDataUrl(url: string) {
+  const mod = await import("qrcode");
+  const encoder = mod as typeof import("qrcode") & {
+    default?: typeof import("qrcode");
+  };
+  const toDataURL = encoder.toDataURL ?? encoder.default?.toDataURL;
+  if (!toDataURL) throw new Error("QR encoder missing");
+  return toDataURL(url, {
+    margin: 1,
+    width: 196,
+    color: { dark: "#1a1916", light: "#ffffff" },
+  });
+}
+
 type PartColors = Record<PaintPart["id"], Finish | null>;
 
 type SavedMaterial = {
@@ -95,6 +113,11 @@ export function ProductStudio() {
   const [colors, setColors] = useState<PartColors>(untouchedColors);
   const [angleId, setAngleId] = useState<string | null>(null);
   const [spinning, setSpinning] = useState(true);
+  const [arHelp, setArHelp] = useState(false);
+  const [pageUrl, setPageUrl] = useState("");
+  const [localPage, setLocalPage] = useState(true);
+  const [qrUrl, setQrUrl] = useState<string | null>(null);
+  const [qrFailed, setQrFailed] = useState(false);
   const originalsRef = useRef<Map<string, SavedMaterial> | null>(null);
   const spinningRef = useRef(spinning);
   spinningRef.current = spinning;
@@ -156,6 +179,15 @@ export function ProductStudio() {
     viewer.autoRotate = spinning;
   }, [spinning, loaded]);
 
+  useEffect(() => {
+    if (!arHelp) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setArHelp(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [arHelp]);
+
   function chooseColor(finish: Finish) {
     setColors((current) => ({ ...current, [partId]: finish }));
   }
@@ -169,6 +201,25 @@ export function ProductStudio() {
     viewer.jumpCameraToGoal();
     viewer.autoRotate = spinning;
     setAngleId(angle.id);
+  }
+
+  function viewInAr() {
+    const viewer = viewerRef.current;
+    if (viewer?.canActivateAR) {
+      void viewer.activateAR().catch(() => setArHelp(true));
+      return;
+    }
+    const url = window.location.href;
+    const local = isLocalHost(window.location.hostname);
+    setPageUrl(url);
+    setLocalPage(local);
+    setQrUrl(null);
+    setQrFailed(false);
+    setArHelp(true);
+    if (local) return;
+    void qrDataUrl(url)
+      .then((code) => setQrUrl(code))
+      .catch(() => setQrFailed(true));
   }
 
   function resetAll() {
@@ -205,6 +256,8 @@ export function ProductStudio() {
           max-field-of-view="42deg"
           ar
           ar-modes="webxr scene-viewer quick-look"
+          ar-placement="floor"
+          ar-scale="auto"
         />
       ) : null}
 
@@ -283,8 +336,74 @@ export function ProductStudio() {
         >
           Reset
         </button>
+        <button
+          type="button"
+          onClick={viewInAr}
+          disabled={!loaded}
+          className="rounded-full bg-[#1a1916] px-3 py-1.5 text-sm text-white shadow-sm hover:bg-black disabled:opacity-40"
+        >
+          View in AR
+        </button>
         </div>
       </div>
+
+      {arHelp ? (
+        <div
+          className="absolute inset-0 z-20 flex items-end justify-center bg-[#1a1916]/30 p-4 sm:items-center"
+          onClick={() => setArHelp(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ar-title"
+            className="w-full max-w-sm rounded-3xl bg-white px-5 py-5 text-center shadow-lg"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="ar-title" className="text-base font-medium">
+              View in your room
+            </h2>
+            {localPage ? (
+              <p className="mt-2 text-sm leading-6 text-[#5c574f]">
+                AR opens on a phone. Open this page there, then tap View in AR
+                to place the mixer on the floor.
+              </p>
+            ) : (
+              <>
+                <p className="mt-2 text-sm leading-6 text-[#5c574f]">
+                  Scan this code with your phone, then tap View in AR to place
+                  the mixer on the floor.
+                </p>
+                <div className="mx-auto mt-4 flex h-52 w-52 items-center justify-center rounded-2xl bg-[#f4f1eb]">
+                  {qrUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={qrUrl}
+                      alt=""
+                      width={196}
+                      height={196}
+                      className="h-48 w-48"
+                    />
+                  ) : (
+                    <p className="px-4 text-sm text-[#6f6a62]">
+                      {qrFailed ? "Use the link below on your phone." : "Preparing code"}
+                    </p>
+                  )}
+                </div>
+                {pageUrl ? (
+                  <p className="mt-3 break-all text-xs text-[#6f6a62]">{pageUrl}</p>
+                ) : null}
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => setArHelp(false)}
+              className="mt-4 rounded-full bg-[#1a1916] px-4 py-1.5 text-sm text-white"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="absolute inset-x-4 bottom-4 flex justify-center sm:bottom-5">
         <div className="w-full max-w-md rounded-3xl bg-white/90 px-4 py-3 shadow-sm backdrop-blur">

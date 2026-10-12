@@ -8,6 +8,8 @@ type ModelViewerProps = React.DetailedHTMLProps<
   alt?: string;
   ar?: boolean;
   "ar-modes"?: string;
+  "ar-placement"?: "floor" | "wall";
+  "ar-scale"?: "auto" | "fixed";
   "auto-rotate"?: boolean;
   "auto-rotate-delay"?: number | string;
   "camera-controls"?: boolean;
