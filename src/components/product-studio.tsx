@@ -4,10 +4,12 @@ import type { ModelViewerElement } from "@google/model-viewer";
 import { useEffect, useRef, useState } from "react";
 import {
   cameraAngles,
-  paintParts,
+  productById,
+  products,
   finishes,
   type Finish,
   type PaintPart,
+  type ProductId,
 } from "@/data/product";
 
 const initialOrbit = cameraAngles[0].orbit;
@@ -80,7 +82,7 @@ async function qrDataUrl(url: string) {
   });
 }
 
-type PartColors = Record<PaintPart["id"], Finish | null>;
+type PartColors = Record<string, Finish | null>;
 
 type SavedMaterial = {
   color: [number, number, number, number];
@@ -90,13 +92,26 @@ type SavedMaterial = {
 const paintedMetals = new Set([
   "carbon steel",
   "chromium plate",
+  "chromium plate-1",
+  "chromium plate-2",
   "satin finish stainless steel",
   "matte steel",
   "polished steel",
+  "polished steel-1",
+  "polished steel-2",
+  "metallic cool grey",
+  "polished brass",
+  "metallic gold",
+  "metallic gold-1",
+  "metallic gold-2",
+  "metallic gold-3",
+  "metallic gold-4",
 ]);
 
-function untouchedColors(): PartColors {
-  return { body: null, motors: null, frame: null };
+function blankColors(parts: readonly { id: string }[]): PartColors {
+  const colors: PartColors = {};
+  for (const part of parts) colors[part.id] = null;
+  return colors;
 }
 
 function captureOriginals(viewer: ModelViewerElement) {
@@ -142,11 +157,12 @@ function paintPart(viewer: ModelViewerElement, part: PaintPart, hex: string) {
 
 function applyColors(
   viewer: ModelViewerElement,
+  parts: readonly PaintPart[],
   colors: PartColors,
   originals: Map<string, SavedMaterial> | null,
 ) {
   if (!originals) return;
-  for (const part of paintParts) {
+  for (const part of parts) {
     const finish = colors[part.id];
     if (finish) paintPart(viewer, part, finish.hex);
     else restorePart(viewer, part, originals);
@@ -159,8 +175,14 @@ export function ProductStudio() {
   const [loaded, setLoaded] = useState(false);
   const [progress, setProgress] = useState(0);
   const [failed, setFailed] = useState(false);
-  const [partId, setPartId] = useState<PaintPart["id"]>("body");
-  const [colors, setColors] = useState<PartColors>(untouchedColors);
+  const [productId, setProductId] = useState<ProductId>(products[0].id);
+  const [partId, setPartId] = useState(products[0].parts[0].id);
+  const [colorsByProduct, setColorsByProduct] = useState<
+    Record<ProductId, PartColors>
+  >(() => ({
+    mixer: blankColors(products[0].parts),
+    assembly: blankColors(products[1].parts),
+  }));
   const [angleId, setAngleId] = useState<string | null>(null);
   const [spinning, setSpinning] = useState(true);
   const [arSize, setArSize] = useState<ArSizeId>("auto");
@@ -177,7 +199,10 @@ export function ProductStudio() {
   const originalsRef = useRef<Map<string, SavedMaterial> | null>(null);
   const spinningRef = useRef(spinning);
   spinningRef.current = spinning;
-  const activePart = paintParts.find((part) => part.id === partId) ?? paintParts[0];
+  const product = productById(productId);
+  const colors = colorsByProduct[productId];
+  const activePart =
+    product.parts.find((part) => part.id === partId) ?? product.parts[0];
 
   useEffect(() => {
     const blockBrowserGesture = (event: TouchEvent) => {
@@ -241,8 +266,8 @@ export function ProductStudio() {
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || !loaded) return;
-    applyColors(viewer, colors, originalsRef.current);
-  }, [colors, loaded]);
+    applyColors(viewer, product.parts, colors, originalsRef.current);
+  }, [colors, loaded, product]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -280,7 +305,10 @@ export function ProductStudio() {
   }, [loaded, viewerReady]);
 
   function chooseColor(finish: Finish) {
-    setColors((current) => ({ ...current, [partId]: finish }));
+    setColorsByProduct((current) => ({
+      ...current,
+      [productId]: { ...current[productId], [partId]: finish },
+    }));
   }
 
   function showAngle(angle: (typeof cameraAngles)[number]) {
@@ -367,10 +395,31 @@ export function ProductStudio() {
     setArGuide(true);
   }
 
+  function chooseProduct(id: ProductId) {
+    if (id === productId) return;
+    const viewer = viewerRef.current;
+    originalsRef.current = null;
+    setPartId(productById(id).parts[0].id);
+    setAngleId(null);
+    setLoaded(false);
+    setFailed(false);
+    setProgress(0);
+    if (viewer) {
+      delete viewer.dataset.orbitReady;
+      viewer.scale = pageScale;
+      viewer.cameraTarget = "auto auto auto";
+      viewer.fieldOfView = "auto";
+    }
+    setProductId(id);
+  }
+
   function resetAll() {
     const viewer = viewerRef.current;
-    setColors(untouchedColors());
-    setPartId("body");
+    setColorsByProduct((current) => ({
+      ...current,
+      [productId]: blankColors(product.parts),
+    }));
+    setPartId(product.parts[0].id);
     setAngleId(null);
     setSpinning(true);
     setArSize("auto");
@@ -390,8 +439,8 @@ export function ProductStudio() {
         <model-viewer
           ref={viewerRef}
           className="absolute inset-0 h-full w-full touch-none select-none outline-none"
-          src="/models/mixer.glb"
-          alt="Industrial mixer with inclined conveyor"
+          src={products.find((item) => item.id === productId)?.src}
+          alt={products.find((item) => item.id === productId)?.alt}
           camera-controls
           touch-action="none"
           shadow-intensity="1.15"
@@ -408,7 +457,7 @@ export function ProductStudio() {
       ) : null}
 
       {!loaded && !failed ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
           <div className="w-56 text-center">
             <p className="text-xs tracking-[0.18em] text-[#6f6a62] uppercase">
               Loading model
@@ -425,14 +474,49 @@ export function ProductStudio() {
       ) : null}
 
       {failed ? (
-        <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
+        <div className="absolute inset-0 z-20 flex items-center justify-center px-6 text-center">
           <p className="max-w-sm text-sm text-[#6f6a62]">
             The 3D model could not be loaded. Refresh the page and try again.
           </p>
         </div>
       ) : null}
 
-      <div className="absolute inset-x-0 top-4 flex justify-center px-4">
+      <div
+        className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center"
+        aria-hidden="true"
+      >
+        <img
+          src="/brand/logo-mark.png"
+          alt=""
+          draggable={false}
+          className="w-[min(46vw,240px)] opacity-25 select-none"
+        />
+      </div>
+
+      <div className="absolute inset-x-0 top-4 z-20 flex flex-col items-center gap-2 px-4">
+        <div
+          className="flex gap-1 rounded-full bg-white/90 p-1 shadow-sm backdrop-blur"
+          aria-label="Product"
+        >
+          {products.map((product) => {
+            const selected = product.id === productId;
+            return (
+              <button
+                key={product.id}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => chooseProduct(product.id)}
+                className={`rounded-full px-3 py-1.5 text-sm ${
+                  selected
+                    ? "bg-[#1a1916] text-white"
+                    : "text-[#1a1916] hover:bg-black/5"
+                }`}
+              >
+                {product.label}
+              </button>
+            );
+          })}
+        </div>
         <div className="flex flex-wrap items-center justify-center gap-2">
         <div className="flex gap-1 rounded-full bg-white/90 p-1 shadow-sm backdrop-blur">
           {cameraAngles.map((angle) => {
@@ -604,11 +688,11 @@ export function ProductStudio() {
         </div>
       ) : null}
 
-      <p className="pointer-events-none absolute bottom-3 left-4 z-10 text-xs text-[#6f6a62]">
+      <p className="pointer-events-none absolute bottom-3 left-4 z-20 text-xs text-[#6f6a62]">
         Abhi Dobariya
       </p>
 
-      <div className="absolute inset-x-4 bottom-8 flex justify-center sm:bottom-10">
+      <div className="absolute inset-x-4 bottom-8 z-20 flex justify-center sm:bottom-10">
         <button
           type="button"
           aria-expanded={colorsOpen}
@@ -654,8 +738,8 @@ export function ProductStudio() {
               </svg>
             </button>
           </div>
-          <div className="mb-3 flex justify-center gap-1">
-            {paintParts.map((part) => {
+          <div className="mb-3 flex flex-wrap justify-center gap-1">
+            {product.parts.map((part) => {
               const selected = part.id === partId;
               return (
                 <button
@@ -683,7 +767,10 @@ export function ProductStudio() {
               aria-label={`${activePart.label} original color`}
               aria-pressed={colors[partId] === null}
               onClick={() =>
-                setColors((current) => ({ ...current, [partId]: null }))
+                setColorsByProduct((current) => ({
+                  ...current,
+                  [productId]: { ...current[productId], [partId]: null },
+                }))
               }
               className={`flex h-9 w-9 items-center justify-center rounded-full border bg-white text-[#1a1916] shadow-sm ${
                 colors[partId] === null
